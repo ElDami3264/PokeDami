@@ -1,0 +1,25 @@
+{
+  "name": "pokedami",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "cap:init": "npx cap init PokeDami com.pokedami.app --web-dir=dist",
+    "cap:add": "npx cap add android",
+    "cap:build": "npm run build && npx cap copy android && npx cap open android"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.0",
+    "vite-plugin-pwa": "^0.20.0",
+    "@capacitor/core": "^6.1.0",
+    "@capacitor/cli": "^6.1.0",
+    "@capacitor/android": "^6.1.0"
+  }
+}
