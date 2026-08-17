@@ -1,0 +1,304 @@
+
+import { useState, useEffect, useRef } from 'react'
+import { POKES, BADGES, COLORS, TYPE_ICON } from '../data.js'
+
+const QUIZ = [
+  {q:'¿Primer Pokémon de Kanto?',a:'Bulbasaur',opts:['Bulbasaur','Charmander','Squirtle','Pikachu']},
+  {q:'¿Cuántos Pokémon hay en Kanto?',a:'151',opts:['151','150','152','100']},
+  {q:'¿Quién es el líder de gimnasio de Ciudad Plateada?',a:'Brock',opts:['Brock','Misty','Lt. Surge','Erika']},
+]
+
+function getSprite(id){
+  return `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${id}.png`
+}
+function getSpriteFallback(id){
+  return `https://cdn.jsdelivr.net/gh/PokeAPI/sprites@master/sprites/pokemon/other/official-artwork/${id}.png`
+}
+function getSpriteSmall(id){
+  return `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${id}.png`
+}
+
+export default function Game({ diff, gameMode, p1Name, p2Name, soundOn, onScore }){
+  const [level,setLevel]=useState(1)
+  const [pts,setPts]=useState(0)
+  const [scores,setScores]=useState({p1:0,p2:0})
+  const [currentPlayer,setCurrentPlayer]=useState(1)
+  const [cur,setCur]=useState(()=>POKES[Math.floor(Math.random()*POKES.length)])
+  const [mode,setMode]=useState('names')
+  const [revealed,setRevealed]=useState([])
+  const [hintsUsed,setHintsUsed]=useState(0)
+  const [msg,setMsg]=useState('')
+  const [typeSel,setTypeSel]=useState(new Set())
+  const [locked,setLocked]=useState(false)
+  const [quiz,setQuiz]=useState(null)
+  const [badge,setBadge]=useState(null)
+  const [puzzleGrid,setPuzzleGrid]=useState([])
+  const [puzzleSel,setPuzzleSel]=useState(null)
+  const [timeLeft,setTimeLeft]=useState(60)
+  const inputRef=useRef(null)
+  const timerRef=useRef(null)
+
+  const isEasy = diff==='easy'
+  const isDuo = gameMode==='duo'
+
+  function play(ok){
+    if(!soundOn) return
+    try{
+      const ctx=new (window.AudioContext||window.webkitAudioContext)()
+      const o=ctx.createOscillator(); o.frequency.value= ok?800:200; o.connect(ctx.destination); o.start(); setTimeout(()=>{o.stop(); ctx.close()},200)
+    }catch{}
+  }
+
+  function nextPoke(){
+    let pool=POKES.filter(p=>p.id!==cur?.id)
+    return pool[Math.floor(Math.random()*pool.length)]
+  }
+
+  function clearTimer(){ if(timerRef.current){ clearInterval(timerRef.current); timerRef.current=null } }
+
+  function startTimer(){
+    clearTimer()
+    setTimeLeft(60)
+    timerRef.current=setInterval(()=>{
+      setTimeLeft(t=>{
+        if(t<=1){ clearTimer(); return 0 }
+        return t-1
+      })
+    },1000)
+  }
+
+  function startNext(){
+    if(level>20){ setMsg('🏆 Juego terminado!'); clearTimer(); return }
+    setLocked(false)
+    setRevealed([])
+    setHintsUsed(0)
+    setTypeSel(new Set())
+    setMsg('')
+    clearTimer()
+    const modes=['shadow','names','types','badge','quiz','puzzle']
+    const m=modes[Math.floor(Math.random()*modes.length)]
+    setMode(m)
+    const n=nextPoke()
+    setCur(n)
+    if(m==='quiz') setQuiz(QUIZ[Math.floor(Math.random()*QUIZ.length)])
+    if(m==='badge') setBadge(BADGES[Math.floor(Math.random()*BADGES.length)])
+    if(m==='puzzle'){
+      const pieces=isEasy?9:12
+      const arr=Array.from({length:pieces},(_,i)=>i).sort(()=>0.5-Math.random())
+      setPuzzleGrid(arr)
+      startTimer()
+    }
+    if(isDuo){
+      setCurrentPlayer(c=>c===1?2:1)
+    }
+  }
+
+  useEffect(()=>{ startNext(); return ()=>clearTimer() },[])
+  useEffect(()=>{ if(!isEasy && (mode==='shadow'||mode==='names') && inputRef.current) inputRef.current.focus() },[cur,mode])
+
+  function gain(add){
+    clearTimer()
+    if(isDuo){
+      if(currentPlayer===1) setScores(s=>({...s,p1:s.p1+add})); else setScores(s=>({...s,p2:s.p2+add}))
+    } else {
+      const np=pts+add; setPts(np); onScore?.(np)
+    }
+    setMsg(`✅ +${add} pts`)
+    setLevel(l=>l+1)
+    setTimeout(startNext,1200)
+  }
+
+  function handlePick(name,el){
+    if(locked) return
+    setLocked(true)
+    const ok=name===cur.n
+    if(el){ el.classList.add(ok?'ok':'bad') }
+    if(ok){ play(true); gain(Math.max(2,10-hintsUsed*2)) }
+    else { play(false); setMsg(`❌ Era ${cur.n} -3pts`); setLevel(l=>l+1); setTimeout(startNext,1200) }
+  }
+
+  function handleBadge(chosen,correct,el){
+    if(locked) return
+    setLocked(true)
+    const ok=chosen===correct
+    if(el) el.classList.add(ok?'ok':'bad')
+    if(ok){ play(true); gain(Math.max(2,10-hintsUsed*2)) }
+    else { play(false); setMsg(`❌ Era ${correct}`); setLevel(l=>l+1); setTimeout(startNext,1200) }
+  }
+
+  function handleQuiz(chosen,correct,el){
+    if(locked) return
+    setLocked(true)
+    const ok=chosen===correct
+    if(el) el.classList.add(ok?'ok':'bad')
+    if(ok){ play(true); gain(10) }
+    else { play(false); setMsg(`❌ Era ${correct}`); setLevel(l=>l+1); setTimeout(startNext,1200) }
+  }
+
+  function checkWrite(){
+    const v=inputRef.current?.value?.toLowerCase().trim()
+    if(!v) return
+    if(v===cur.n.toLowerCase()){
+      play(true); gain(Math.max(2,10-hintsUsed*2))
+    } else if(v.length>=cur.n.length-1){
+      play(false); setMsg(`❌ Era ${cur.n} -3pts`); setLevel(l=>l+1); setTimeout(startNext,1200)
+    }
+  }
+
+  function useHint(){
+    if(hintsUsed>=3) return
+    setHintsUsed(h=>h+1)
+    const order=[0, Math.floor(cur.n.length/2), cur.n.length-1, 1, 2]
+    for(let idx of order){
+      if(!revealed.includes(idx) && idx<cur.n.length){ setRevealed(r=>[...r,idx]); break }
+    }
+  }
+
+  function placeholder(){
+    if(revealed.length===0) return 'Escribe el nombre...'
+    let s=''
+    for(let i=0;i<cur.n.length;i++){
+      if(cur.n[i]===' ') s+=' '
+      else if(revealed.includes(i)) s+=cur.n[i]
+      else s+='_'
+    }
+    return s
+  }
+
+  function toggleType(t,el){
+    if(locked) return
+    const has=typeSel.has(t)
+    if(!has && typeSel.size>=2) return
+    const ns=new Set(typeSel)
+    if(has){ ns.delete(t); el?.classList.remove('sel') } else { ns.add(t); el?.classList.add('sel') }
+    setTypeSel(ns)
+  }
+
+  function checkType(){
+    if(locked) return
+    setLocked(true)
+    const ok=cur.t.every(x=>typeSel.has(x)) && Array.from(typeSel).every(x=>cur.t.includes(x))
+    if(ok){ play(true); gain(10) }
+    else { play(false); setMsg(`❌ Era ${cur.t.join('/')}`); setLevel(l=>l+1); setTimeout(startNext,1200) }
+  }
+
+  function swapPuzzle(i){
+    if(puzzleSel===null){ setPuzzleSel(i); return }
+    if(puzzleSel===i){ setPuzzleSel(null); return }
+    const arr=[...puzzleGrid]
+    const tmp=arr[puzzleSel]; arr[puzzleSel]=arr[i]; arr[i]=tmp
+    setPuzzleGrid(arr)
+    setPuzzleSel(null)
+  }
+
+  function verifyPuzzle(){
+    const ok=puzzleGrid.every((v,i)=>v===i)
+    if(ok){ play(true); gain(20); setLevel(l=>l+1); setTimeout(startNext,1000) }
+    else { setMsg(`🧩 ${puzzleGrid.filter((v,i)=>v===i).length}/${puzzleGrid.length} correctas - seguí armando`) }
+  }
+
+  const totalPts=isDuo?`${p1Name}:${scores.p1} | ${p2Name}:${scores.p2}`:`${pts} pts`
+  const turnLabel=isDuo?`👤 Turno de: ${currentPlayer===1?p1Name:p2Name}`:''
+
+  return (
+    <div style={{maxWidth:560,margin:'0 auto',padding:'0 14px 100px'}}>
+      <div style={{display:'flex',justifyContent:'space-between',margin:'10px 0'}}>
+        <span style={{padding:'6px 10px',borderRadius:20,background:'var(--bg2)',border:'1px solid var(--border)',fontSize:12,fontWeight:800}}>{level}/20</span>
+        <span style={{padding:'6px 10px',borderRadius:20,background:'var(--bg2)',border:'1px solid var(--border)',fontSize:12,fontWeight:800}}>{totalPts}</span>
+      </div>
+      {isDuo && <div style={{textAlign:'center',fontWeight:800,marginBottom:8}}>{turnLabel}</div>}
+      <div className="card">
+        {mode!=='badge' && mode!=='quiz' && mode!=='puzzle' && (
+          <div style={{width:220,height:220,margin:'0 auto',border:'1px solid var(--border)',borderRadius:20,display:'grid',placeItems:'center',overflow:'hidden'}}>
+            <img src={getSprite(cur.id)} onError={e=>e.target.src=getSpriteFallback(cur.id)} style={{width:190,height:190,objectFit:'contain',filter:mode==='shadow'?'brightness(0) contrast(1.2)':'none'}} alt={cur.n} />
+          </div>
+        )}
+        {mode==='badge' && badge && (
+          <div style={{width:120,height:120,margin:'0 auto',display:'grid',placeItems:'center'}}>
+            <img src={badge.img} style={{width:100,height:100,objectFit:'contain'}} alt="medalla" />
+          </div>
+        )}
+        <h3 style={{margin:'12px 0'}}>
+          {mode==='types'?'¿De qué tipo es este Pokémon?':mode==='badge'?`¿${Math.random()<0.5?'Quién es el líder':'De qué gimnasio es'} esta medalla?`:mode==='quiz'?quiz?.q:mode==='puzzle'?`¡Armá el rompecabezas de ${cur.n}!`:'¿Quién es ese Pokémon?'}
+        </h3>
+
+        {(mode==='shadow'||mode==='names') && isEasy && (
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+            {[...POKES].sort(()=>0.5-Math.random()).slice(0,3).concat(cur).sort(()=>0.5-Math.random()).map(o=>(
+              <div key={o.n} className="tcard" onClick={e=>handlePick(o.n,e.currentTarget)}>{o.n}</div>
+            ))}
+          </div>
+        )}
+
+        {(mode==='shadow'||mode==='names') && !isEasy && (
+          <div>
+            <input ref={inputRef} placeholder={placeholder()} style={{width:'100%',padding:12,borderRadius:12,border:'2px solid var(--border)',textAlign:'center',fontWeight:700}} onKeyDown={e=>e.key==='Enter'&&checkWrite()} />
+            <div style={{display:'flex',gap:8,marginTop:8}}>
+              <button onClick={useHint} style={{flex:1,padding:10,borderRadius:12,border:'1px solid var(--border)',background:'#fef9c3'}}>💡 Pista ({hintsUsed}/3) - {placeholder()}</button>
+              <button onClick={checkWrite} style={{flex:1,padding:10,borderRadius:12,background:'var(--red)',color:'#fff',border:'none'}}>Comprobar</button>
+            </div>
+            <div style={{fontSize:11,color:'var(--muted)',marginTop:6}}>Te pedí mucho que a los que hay que escribir nombre le pongas pistas 3 letras en su lugar</div>
+          </div>
+        )}
+
+        {mode==='types' && (
+          <div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+              {Object.keys(COLORS).map(t=>(
+                <div key={t} className="tcard" onClick={e=>toggleType(t,e.currentTarget)}>{TYPE_ICON[t]} {t}</div>
+              ))}
+            </div>
+            <button onClick={checkType} style={{marginTop:10,width:'100%',padding:12,borderRadius:12,background:'var(--red)',color:'#fff',border:'none',fontWeight:800}}>Confirmar tipos</button>
+          </div>
+        )}
+
+        {mode==='badge' && badge && (
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+            {(()=>{
+              const isLeader=Math.random()<0.5
+              let opts=isLeader?[badge.leader]:[badge.gym.split(' - ')[0]]
+              while(opts.length<4){
+                const rb=BADGES[Math.floor(Math.random()*BADGES.length)]
+                const v=isLeader?rb.leader:rb.gym.split(' - ')[0]
+                if(!opts.includes(v)) opts.push(v)
+              }
+              opts.sort(()=>0.5-Math.random())
+              const correct=isLeader?badge.leader:badge.gym.split(' - ')[0]
+              return opts.map(o=><div key={o} className="tcard" onClick={e=>handleBadge(o,correct,e.currentTarget)}>{o}</div>)
+            })()}
+          </div>
+        )}
+
+        {mode==='quiz' && quiz && (
+          <div style={{display:'grid',gap:8}}>
+            {quiz.opts.map(o=>(
+              <div key={o} className="tcard" onClick={e=>handleQuiz(o,quiz.a,e.currentTarget)}>{o}</div>
+            ))}
+          </div>
+        )}
+
+        {mode==='puzzle' && (
+          <div>
+            <div style={{background:'#fef9c3',padding:8,borderRadius:12,fontSize:12,fontWeight:700,marginBottom:8}}>⏱️ {timeLeft}s - Tocá dos piezas para cambiarlas - {puzzleGrid.length} piezas</div>
+            <div style={{display:'grid',gridTemplateColumns:`repeat(${Math.round(Math.sqrt(puzzleGrid.length))},1fr)`,gap:4,width:240,margin:'0 auto'}}>
+              {puzzleGrid.map((orig,i)=>{
+                const cols=Math.round(Math.sqrt(puzzleGrid.length))
+                const row=Math.floor(orig/cols)
+                const col=orig%cols
+                return (
+                  <div key={i} onClick={()=>swapPuzzle(i)} style={{aspectRatio:'1',border:puzzleSel===i?'3px solid #ef4444':'1px solid #e5e7eb',borderRadius:8,overflow:'hidden',cursor:'pointer',position:'relative',background:'#fff'}}>
+                    <img src={getSprite(cur.id)} onError={e=>e.target.src=getSpriteFallback(cur.id)} style={{position:'absolute',width:`${cols*100}%`,height:`${cols*100}%`,left:`-${col*100}%`,top:`-${row*100}%`,maxWidth:'none'}} />
+                  </div>
+                )
+              })}
+            </div>
+            <div style={{marginTop:8,fontSize:12}}>{puzzleGrid.filter((v,i)=>v===i).length}/{puzzleGrid.length} correctas</div>
+            <button onClick={verifyPuzzle} style={{marginTop:8,width:'100%',padding:12,borderRadius:12,background:'#22c55e',color:'#fff',border:'none',fontWeight:800}}>Verificar puzzle</button>
+          </div>
+        )}
+
+        {msg && <div style={{marginTop:12,fontWeight:800}}>{msg}</div>}
+      </div>
+    </div>
+  )
+}
